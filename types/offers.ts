@@ -11,7 +11,9 @@ export interface Offer {
 export interface OfferFormData {
   productId: string;
   originalPrice: number;
-  inventory: number;
+  discountPrice?: number;
+  balance: number;
+  isActive?: boolean;
   status?: 'active' | 'inactive';
 }
 

@@ -111,7 +111,10 @@ export function OfferCard({ offer, product, onAddOffer }: OfferCardProps) {
               </div>
               {offer.rank && offer.rank <= 3 && (
                 <div className="flex items-center gap-2">
-                  <Badge variant="secondary">
+                  <Badge 
+                    variant="secondary"
+                    className={offer.rank === 1 ? "bg-green-600 hover:bg-green-700 text-white" : offer.rank <= 3 ? "bg-green-100 text-green-800 hover:bg-green-200" : ""}
+                  >
                     رتبه {offer.rank} در لیست آفر محصول
                   </Badge>
                 </div>

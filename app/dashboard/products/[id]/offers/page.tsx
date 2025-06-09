@@ -2,7 +2,7 @@
 
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useProductQuery } from "@/app/api/products/query"
-import { useProductOffersQuery } from "@/app/api/offers/query"
+import { useProductOffersQuery, useAddOfferMutation, useUpdateOfferMutation, useDeleteOfferMutation } from "@/app/api/offers/query"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -43,11 +43,14 @@ import {
 } from "@/components/ui/alert-dialog"
 import { formatNumber } from "@/lib/utils"
 import { Loading } from "@/components/ui/loading"
+import { OfferFormData } from "@/types/offers"
+import { useQueryClient } from "@tanstack/react-query"
 
 export default function ProductOffersPage() {
   const params = useParams()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const queryClient = useQueryClient()
   const editOfferId = searchParams.get('edit')
   const { data: product, isLoading: isProductLoading } = useProductQuery(params.id as string)
   const { data: offers, isLoading: isOffersLoading } = useProductOffersQuery(params.id as string)
@@ -77,6 +80,10 @@ export default function ProductOffersPage() {
   const sellerProfile = useSellerProfileStore((state) => state.profile)
   const currentSellerId = sellerProfile?.id
 
+  const { mutate: addOffer, isPending: isAddingOffer } = useAddOfferMutation()
+  const { mutate: updateOffer, isPending: isUpdating } = useUpdateOfferMutation()
+  const { mutate: deleteOffer, isPending: isDeleting } = useDeleteOfferMutation()
+
   useEffect(() => {
     if (editOfferId && offers?.data) {
       const offerToEdit = offers.data.find((offer: ProductOffer) => offer._id === editOfferId)
@@ -87,6 +94,10 @@ export default function ProductOffersPage() {
           newUrl.searchParams.delete('edit')
           router.push(newUrl.pathname)
           return
+        }
+
+        if (!offerToEdit.isActive) {
+          setActiveTab("my")
         }
 
         setEditOffer({
@@ -123,7 +134,7 @@ export default function ProductOffersPage() {
 
   const filteredOffers = activeTab === "my" 
     ? (offers?.data || []).filter((offer: ProductOffer) => offer.seller?._id === currentSellerId)
-    : (offers?.data || [])
+    : (offers?.data || []).filter((offer: ProductOffer) => offer.isActive)
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat("fa-IR").format(price)
@@ -161,37 +172,48 @@ export default function ProductOffersPage() {
         return
       }
 
-      const offerData = {
+      const originalPrice = Number(newOffer.originalPrice)
+      const discountPrice = newOffer.discountPrice ? Number(newOffer.discountPrice) : 0
+      const balance = Number(newOffer.inventory)
+
+      // Validate original price
+      if (originalPrice < 500) {
+        toast.error("قیمت اصلی معتبر نیست")
+        return
+      }
+
+      // Validate discount price
+      if (discountPrice > 0 && discountPrice >= originalPrice) {
+        toast.error("قیمت با تخفیف باید کمتر از قیمت اصلی باشد")
+        return
+      }
+
+      // Validate balance
+      if (balance < 1) {
+        toast.error("موجودی باید بیشتر از 0 باشد")
+        return
+      }
+
+      const offerData: OfferFormData = {
         productId: params.id as string,
-        originalPrice: Number(newOffer.originalPrice),
-        discountPrice: newOffer.discountPrice ? Number(newOffer.discountPrice) : undefined,
-        inventory: Number(newOffer.inventory),
-        isActive: true
+        originalPrice,
+        discountPrice,
+        balance
       }
 
-      const response = await fetch("/api/offers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(offerData),
+      addOffer(offerData, {
+        onSuccess: () => {
+          toast.success("آفر با موفقیت ایجاد شد")
+          setShowAddOffer(false)
+          setNewOffer({
+            originalPrice: "",
+            discountPrice: "",
+            inventory: "",
+          })
+          // Invalidate and refetch offers
+          queryClient.invalidateQueries({ queryKey: ["offers", params.id] })
+        }
       })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to create offer")
-      }
-
-      toast.success("آفر با موفقیت ایجاد شد")
-      setShowAddOffer(false)
-      setNewOffer({
-        originalPrice: "",
-        discountPrice: "",
-        inventory: "",
-      })
-      // Refresh offers list
-      router.refresh()
     } catch (error) {
       console.error("Error creating offer:", error)
       toast.error("خطا در ایجاد آفر")
@@ -201,12 +223,54 @@ export default function ProductOffersPage() {
   const handleEditOffer = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      // Here you would call your API to update the offer
-      toast.success("پیشنهاد با موفقیت ویرایش شد")
-      setEditingOfferId(null)
-      setEditOffer({ originalPrice: "", discountPrice: "", inventory: "" })
+      // Validate inputs
+      if (!editOffer.originalPrice || !editOffer.inventory) {
+        toast.error("لطفا قیمت اصلی و موجودی را وارد کنید")
+        return
+      }
+
+      const originalPrice = Number(editOffer.originalPrice)
+      const discountPrice = editOffer.discountPrice ? Number(editOffer.discountPrice) : 0
+      const balance = Number(editOffer.inventory)
+
+      // Validate original price
+      if (originalPrice < 500) {
+        toast.error("قیمت اصلی معتبر نیست")
+        return
+      }
+
+      // Validate discount price
+      if (discountPrice > 0 && discountPrice >= originalPrice) {
+        toast.error("قیمت با تخفیف باید کمتر از قیمت اصلی باشد")
+        return
+      }
+
+      // Validate balance
+      if (balance < 1) {
+        toast.error("موجودی باید بیشتر از 0 باشد")
+        return
+      }
+
+      const offerData = {
+        originalPrice,
+        discountPrice,
+        balance
+      }
+
+      updateOffer({
+        offerId: editingOfferId!,
+        offerData
+      }, {
+        onSuccess: () => {
+          toast.success("آفر با موفقیت بروزرسانی شد")
+          setEditingOfferId(null)
+          setEditOffer({ originalPrice: "", discountPrice: "", inventory: "" })
+          queryClient.invalidateQueries({ queryKey: ["offers", params.id] })
+        }
+      })
     } catch (error) {
-      toast.error("خطا در ویرایش پیشنهاد")
+      console.error("Error updating offer:", error)
+      toast.error("خطا در بروزرسانی آفر")
     }
   }
 
@@ -244,20 +308,35 @@ export default function ProductOffersPage() {
 
   const handleToggleActive = async (offerId: string, currentStatus: boolean) => {
     try {
-      // Here you would call your API to toggle the offer status
-      const newStatus = !currentStatus
-      toast.success(`پیشنهاد با موفقیت ${newStatus ? 'فعال' : 'غیرفعال'} شد`)
+      updateOffer({
+        offerId,
+        offerData: {
+          isActive: currentStatus
+        }
+      }, {
+        onSuccess: () => {
+          toast.success(`آفر با موفقیت ${currentStatus ? 'فعال' : 'غیرفعال'} شد`)
+          queryClient.invalidateQueries({ queryKey: ["offers", params.id] })
+        }
+      })
     } catch (error) {
-      toast.error("خطا در تغییر وضعیت پیشنهاد")
+      toast.error("خطا در تغییر وضعیت آفر")
     }
   }
 
   const handleDeleteOffer = async (offerId: string) => {
     try {
-      // Here you would call your API to delete the offer
-      toast.success("پیشنهاد با موفقیت حذف شد")
+      deleteOffer(offerId, {
+        onSuccess: () => {
+          toast.success("آفر با موفقیت حذف شد")
+          queryClient.invalidateQueries({ queryKey: ["offers", params.id] })
+        },
+        onError: () => {
+          toast.error("خطا در حذف آفر")
+        }
+      })
     } catch (error) {
-      toast.error("خطا در حذف پیشنهاد")
+      toast.error("خطا در حذف آفر")
     }
   }
 
@@ -495,8 +574,8 @@ export default function ProductOffersPage() {
                       <Button variant="outline" onClick={handleCancelAddOffer}>
                         انصراف
                       </Button>
-                      <Button onClick={handleSubmitNewOffer}>
-                        ثبت آفر
+                      <Button onClick={handleSubmitNewOffer} disabled={isAddingOffer}>
+                        {isAddingOffer ? "در حال ثبت..." : "ثبت آفر"}
                       </Button>
                     </div>
                   </div>
@@ -507,184 +586,201 @@ export default function ProductOffersPage() {
         </AnimatePresence>
 
         {/* Offers Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="all">همه پیشنهادات</TabsTrigger>
-            <TabsTrigger value="my">پیشنهادات من</TabsTrigger>
-          </TabsList>
+        <div className="flex justify-end mb-4">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList>
+              <TabsTrigger value="all">پیشنهادات فعال</TabsTrigger>
+              <TabsTrigger value="my">تمام پیشنهادات من</TabsTrigger>
+            </TabsList>
 
-          <TabsContent value={activeTab} className="space-y-4">
-            {!filteredOffers?.length ? (
-              <div className="text-center py-8 text-muted-foreground">
-                هیچ آفری برای این محصول یافت نشد
-              </div>
-            ) : (
-              filteredOffers.map((offer: ProductOffer, index: number) => (
-                <div key={offer._id} className="space-y-4">
-                  <Card className={`relative ${index === 0 ? 'border-r-4 border-blue-500' : ''}`}>
-                    <CardContent className="p-4" dir="rtl">
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            {offer.seller?._id === currentSellerId ? (
-                              <Badge variant="default">پیشنهاد شما</Badge>
-                            ):(<Badge variant="secondary">فروشنده</Badge>)}
-                            {index === 0 && (
-                              <Badge variant="secondary" className="bg-green-100 text-green-700 hover:bg-green-100">
-                                <Star className="h-3 w-3 ml-1" />
-                                بهترین پیشنهاد
-                              </Badge>
-                            )}
-                            {!offer.isActive && (
-                              <Badge variant="secondary" className="bg-gray-100 text-gray-700 hover:bg-gray-100">
-                                غیرفعال
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex gap-4 text-sm">
-                            <span className={offer.discountPrice ? "text-muted-foreground line-through" : "text-green-600"}>
-                              {formatPrice(offer.originalPrice)} تومان
-                            </span>
-                            {offer.discountPrice && (
-                              <span className="text-green-600 font-semibold">
-                                {formatPrice(offer.discountPrice)} تومان
-                              </span>
-                            )}
-                            <span className="text-muted-foreground">
-                              موجودی: {offer.balance}
-                            </span>
-                          </div>
-                        </div>
-                        {offer.seller?._id === currentSellerId && (
-                          <div className="flex gap-2">
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => toggleEdit(offer)}
-                                    className="relative transition-all duration-200 hover:bg-primary/10"
-                                  >
-                                    <div className={cn(
-                                      "absolute inset-0 rounded-full transition-all duration-200",
-                                      isEditIconRotated && editingOfferId === offer._id 
-                                        ? "bg-primary/10 scale-100" 
-                                        : "scale-0"
-                                    )} />
-                                    <Pencil 
-                                      className={cn(
-                                        "h-4 w-4 transition-transform duration-200 relative z-10",
-                                        isEditIconRotated && editingOfferId === offer._id && "rotate-45"
-                                      )} 
-                                    />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>{editingOfferId === offer._id ? 'انصراف' : 'ویرایش'}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <AnimatePresence>
-                    {editingOfferId === offer._id && (
-                      <motion.div
-                        ref={editCardRef}
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <Card className="mt-4">
-                          <CardContent className="p-4">
-                            <form onSubmit={handleEditConfirm} className="space-y-4" dir="rtl">
-                              <div className="grid gap-4 md:grid-cols-3">
-                                <div className="space-y-2">
-                                  <Label htmlFor="edit-original-price">قیمت اصلی</Label>
-                                  <Input
-                                    id="edit-original-price"
-                                    type="text"
-                                    value={editOffer.originalPrice ? formatNumber(editOffer.originalPrice) : ''}
-                                    onChange={handleEditPriceChange}
-                                    placeholder="مثال: 1,000,000"
-                                    className="text-left"
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="edit-discount-price">قیمت با تخفیف (تومان)</Label>
-                                  <Input
-                                    id="edit-discount-price"
-                                    type="text"
-                                    value={editOffer.discountPrice ? formatNumber(editOffer.discountPrice) : ''}
-                                    onChange={handleEditDiscountPriceChange}
-                                    placeholder="مثال: 900,000"
-                                    className="text-left"
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="edit-inventory">موجودی</Label>
-                                  <Input
-                                    id="edit-inventory"
-                                    type="text"
-                                    value={editOffer.inventory ? formatNumber(editOffer.inventory) : ''}
-                                    onChange={handleEditStockChange}
-                                    placeholder="مثال: 100"
-                                    className="text-left"
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex justify-between items-center pt-4 border-t">
-                                <div className="flex gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setOfferToAction(offer)
-                                      setNewStatus(!offer.isActive)
-                                      setShowStatusConfirm(true)
-                                    }}
-                                  >
-                                    {offer.isActive ? 'غیرفعال کردن' : 'فعال کردن'}
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="destructive"
-                                    onClick={() => {
-                                      setOfferToAction(offer)
-                                      setShowDeleteConfirm(true)
-                                    }}
-                                  >
-                                    <Trash2 className="h-4 w-4 ml-2" />
-                                    حذف آفر
-                                  </Button>
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => setEditingOfferId(null)}
-                                  >
-                                    انصراف
-                                  </Button>
-                                  <Button type="submit">ذخیره تغییرات</Button>
-                                </div>
-                              </div>
-                            </form>
-                          </CardContent>
-                        </Card>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+            <TabsContent value={activeTab} className="space-y-4">
+              {!filteredOffers?.length ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  هیچ آفری برای این محصول یافت نشد
                 </div>
-              ))
-            )}
-          </TabsContent>
-        </Tabs>
+              ) : (
+                filteredOffers.map((offer: ProductOffer, index: number) => (
+                  <div key={offer._id} className="space-y-4">
+                    <Card className={cn(
+                      "relative",
+                      index === 0 ? 'border-r-4 border-blue-500' : '',
+                      !offer.isActive && "bg-muted"
+                    )}>
+                      <CardContent className="p-4" dir="rtl">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              {offer.seller?._id === currentSellerId ? (
+                                <Badge variant="default">پیشنهاد شما</Badge>
+                              ):(<Badge variant="secondary">فروشنده</Badge>)}
+                              {index === 0 && (
+                                <Badge variant="secondary" className="bg-green-100 text-green-700 hover:bg-green-100">
+                                  <Star className="h-3 w-3 ml-1" />
+                                  بهترین پیشنهاد
+                                </Badge>
+                              )}
+                              {!offer.isActive && (
+                                <Badge variant="secondary" className="bg-gray-100 text-gray-700 hover:bg-gray-100">
+                                  غیرفعال
+                                </Badge>
+                              )}
+                            </div>
+                            <div className={cn(
+                              "flex gap-4 text-sm",
+                              !offer.isActive && "text-muted-foreground"
+                            )}>
+                              <span className={cn(
+                                offer.discountPrice ? "text-muted-foreground line-through" : "text-green-600",
+                                !offer.isActive && "text-muted-foreground"
+                              )}>
+                                {formatPrice(offer.originalPrice)} تومان
+                              </span>
+                              {offer.discountPrice && (
+                                <span className={cn(
+                                  "text-green-600 font-semibold",
+                                  !offer.isActive && "text-muted-foreground"
+                                )}>
+                                  {formatPrice(offer.discountPrice)} تومان
+                                </span>
+                              )}
+                              <span className="text-muted-foreground">
+                                موجودی: {offer.balance}
+                              </span>
+                            </div>
+                          </div>
+                          {offer.seller?._id === currentSellerId && (
+                            <div className="flex gap-2">
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => toggleEdit(offer)}
+                                      className="relative transition-all duration-200 hover:bg-primary/10"
+                                    >
+                                      <div className={cn(
+                                        "absolute inset-0 rounded-full transition-all duration-200",
+                                        isEditIconRotated && editingOfferId === offer._id 
+                                          ? "bg-primary/10 scale-100" 
+                                          : "scale-0"
+                                      )} />
+                                      <Pencil 
+                                        className={cn(
+                                          "h-4 w-4 transition-transform duration-200 relative z-10",
+                                          isEditIconRotated && editingOfferId === offer._id && "rotate-45"
+                                        )} 
+                                      />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>{editingOfferId === offer._id ? 'انصراف' : 'ویرایش'}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <AnimatePresence>
+                      {editingOfferId === offer._id && (
+                        <motion.div
+                          ref={editCardRef}
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <Card className="mt-4">
+                            <CardContent className="p-4">
+                              <form onSubmit={handleEditConfirm} className="space-y-4" dir="rtl">
+                                <div className="grid gap-4 md:grid-cols-3">
+                                  <div className="space-y-2">
+                                    <Label htmlFor="edit-original-price">قیمت اصلی</Label>
+                                    <Input
+                                      id="edit-original-price"
+                                      type="text"
+                                      value={editOffer.originalPrice ? formatNumber(editOffer.originalPrice) : ''}
+                                      onChange={handleEditPriceChange}
+                                      placeholder="مثال: 1,000,000"
+                                      className="text-left"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label htmlFor="edit-discount-price">قیمت با تخفیف (تومان)</Label>
+                                    <Input
+                                      id="edit-discount-price"
+                                      type="text"
+                                      value={editOffer.discountPrice ? formatNumber(editOffer.discountPrice) : ''}
+                                      onChange={handleEditDiscountPriceChange}
+                                      placeholder="مثال: 900,000"
+                                      className="text-left"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label htmlFor="edit-inventory">موجودی</Label>
+                                    <Input
+                                      id="edit-inventory"
+                                      type="text"
+                                      value={editOffer.inventory ? formatNumber(editOffer.inventory) : ''}
+                                      onChange={handleEditStockChange}
+                                      placeholder="مثال: 100"
+                                      className="text-left"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="flex justify-between items-center pt-4 border-t">
+                                  <div className="flex gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setOfferToAction(offer)
+                                        setNewStatus(!offer.isActive)
+                                        setShowStatusConfirm(true)
+                                      }}
+                                    >
+                                      {offer.isActive ? 'غیرفعال کردن' : 'فعال کردن'}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      onClick={() => {
+                                        setOfferToAction(offer)
+                                        setShowDeleteConfirm(true)
+                                      }}
+                                    >
+                                      <Trash2 className="h-4 w-4 ml-2" />
+                                      حذف آفر
+                                    </Button>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      onClick={() => setEditingOfferId(null)}
+                                    >
+                                      انصراف
+                                    </Button>
+                                    <Button type="submit" disabled={isUpdating}>
+                                      {isUpdating ? "در حال بروزرسانی..." : "ذخیره تغییرات"}
+                                    </Button>
+                                  </div>
+                                </div>
+                              </form>
+                            </CardContent>
+                          </Card>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ))
+              )}
+            </TabsContent>
+          </Tabs>
+        </div>
 
         {/* Delete Confirmation Dialog */}
         <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
