@@ -30,22 +30,21 @@ interface Product {
 }
 
 interface ProductsResponse {
+  products: Product[]
+  total: number
   page: number
   limit: number
-  totalPages: number
-  totalItems: number
-  products: Product[]
 }
 
-// Function to fetch products list with pagination support
-export const useProductsListQuery = (pageNo: number, rowCount: number) => {
+// Function to fetch products list with pagination and search support
+export const useProductsListQuery = (pageNo: number, rowCount: number, search?: string) => {
   return useGenericQuery<ProductsResponse>(
     async () => {
-      const response = await GetProducts(pageNo, rowCount)
+      const response = await GetProducts(pageNo, rowCount, search)
       const data = response.data as unknown as ProductsResponse
       return data
     },
-    ["products-list", pageNo, rowCount]
+    ["products-list", pageNo, rowCount, search]
   )
 }
 

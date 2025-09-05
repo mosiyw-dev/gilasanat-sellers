@@ -21,8 +21,24 @@ export const GetOffers = (): Promise<APIHttpType<any[]>> => {
   return APIHttp.get(API_ENDPOINTS.offers.list)
 }
 
-export const GetActiveOffers = (): Promise<APIHttpType<any[]>> => {
-  return APIHttp.get(API_ENDPOINTS.offers.active).then(response => ({
+export const GetActiveOffers = (search?: string): Promise<APIHttpType<any[]>> => {
+  const params = new URLSearchParams({
+    ...(search && { search: search })
+  }).toString()
+
+  return APIHttp.get(`${API_ENDPOINTS.offers.active}?${params}`).then(response => ({
+    data: response.data.offers,
+    status: response.status,
+    message: response.data.message
+  }))
+}
+
+export const GetInActiveOffers = (search?: string): Promise<APIHttpType<any[]>> => {
+  const params = new URLSearchParams({
+    ...(search && { search: search })
+  }).toString()
+
+  return APIHttp.get(`${API_ENDPOINTS.offers.inactive}?${params}`).then(response => ({
     data: response.data.offers,
     status: response.status,
     message: response.data.message

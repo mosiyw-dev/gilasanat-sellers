@@ -9,6 +9,7 @@ const API_ENDPOINTS = {
   offers: {
     list: "/offers",
     active:"/sellers/offers",
+    inactive:"/sellers/offers/Inactive",
     get: (id: string) => `/offers/${id}`,
     create: "/offers/create",
     update: (id: string) => `/offers/edit/${id}`,
@@ -17,6 +18,13 @@ const API_ENDPOINTS = {
   },
   sellers: {
     profile: "/sellers/profile",
+  },
+  orders: {
+    seller: {
+      list: "/orders/seller/orders",
+      analytics: "/orders/seller/analytics",
+      updateItemStatus: (id: string) => `/orders/seller/items/${id}/status`,
+    },
   },
   // Add other endpoints as needed
 } as const

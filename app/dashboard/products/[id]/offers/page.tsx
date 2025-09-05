@@ -258,8 +258,11 @@ export default function ProductOffersPage() {
       }
 
       updateOffer({
-        offerId: editingOfferId!,
-        offerData
+        id: editingOfferId!,
+        data: {
+          ...offerData,
+          productId: params.id as string
+        }
       }, {
         onSuccess: () => {
           toast.success("آفر با موفقیت بروزرسانی شد")
@@ -309,10 +312,10 @@ export default function ProductOffersPage() {
   const handleToggleActive = async (offerId: string, currentStatus: boolean) => {
     try {
       updateOffer({
-        offerId,
-        offerData: {
+        id: offerId,
+        data: {
           isActive: currentStatus
-        }
+        } as Partial<OfferFormData>
       }, {
         onSuccess: () => {
           toast.success(`آفر با موفقیت ${currentStatus ? 'فعال' : 'غیرفعال'} شد`)
